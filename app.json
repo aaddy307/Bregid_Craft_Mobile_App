@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Bregid Factory",
+    "slug": "bregid-factory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "bregidfactory",
+    "splash": {
+      "backgroundColor": "#200d00"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bregid.factory"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#200d00",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.bregid.factory",
+      "versionCode": 1,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "NOTIFICATIONS",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "sounds": []
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9450f19a-285a-416d-9753-8bed25531309"
+      }
+    }
+  }
+}

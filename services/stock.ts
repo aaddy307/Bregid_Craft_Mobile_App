@@ -35,6 +35,7 @@ interface SupplierDetails {
   invoiceNumber: string;
   invoiceDate: string;
   supplierContact?: string;
+  purchasePrice?: number;
 }
 
 interface AddStockParams {
@@ -144,7 +145,7 @@ export async function addStock(
       }
     }
 
-    // Build stock log
+// Build stock log
     const stockLogData: Record<string, unknown> = {
       type: 'add',
       material,
@@ -157,16 +158,17 @@ export async function addStock(
       timestamp: new Date().toISOString(),
     };
 
-    if (material === 'footbed') {
-      stockLogData.footbedGender = footbedGender;
-      stockLogData.footbedEuSize = footbedEuSize;
-    }
-
     if (supplierDetails) {
       stockLogData.supplierName = supplierDetails.supplierName;
       stockLogData.invoiceNumber = supplierDetails.invoiceNumber.toUpperCase();
       stockLogData.invoiceDate = supplierDetails.invoiceDate;
       stockLogData.supplierContact = supplierDetails.supplierContact || null;
+      if (supplierDetails.purchasePrice !== undefined) {
+        stockLogData.purchasePrice = supplierDetails.purchasePrice;
+        stockLogData.totalCost = material === 'footbed'
+          ? (quantity / 2) * supplierDetails.purchasePrice
+          : quantity * supplierDetails.purchasePrice;
+      }
     }
 
     await mongoService.insertOne('stock_logs', stockLogData);

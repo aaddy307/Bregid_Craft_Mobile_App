@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, typography, SPACING, BORDER_RADIUS } from '../../constants';
 
@@ -11,12 +11,18 @@ interface StatCardProps {
   icon?: keyof typeof MaterialCommunityIcons.glyphMap;
   trend?: 'up' | 'down' | 'neutral';
   accentLeft?: boolean;
+  onPress?: () => void;
 }
 
-export function StatCard({ title, value, subtitle, unit, icon, trend, accentLeft = false }: StatCardProps) {
+export function StatCard({ title, value, subtitle, unit, icon, trend, accentLeft = false, onPress }: StatCardProps) {
   const displayValue = unit ? `${value} ${unit}` : value;
   return (
-    <View style={[styles.container, accentLeft && styles.containerAccent]}>
+    <TouchableOpacity
+      style={[styles.container, accentLeft && styles.containerAccent, onPress && styles.containerPressable]}
+      onPress={onPress}
+      disabled={!onPress}
+      activeOpacity={onPress ? 0.7 : 1}
+    >
       <View style={styles.header}>
         {icon && (
           <View style={styles.iconWrapper}>
@@ -45,7 +51,7 @@ export function StatCard({ title, value, subtitle, unit, icon, trend, accentLeft
         )}
       </View>
       {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -66,6 +72,9 @@ const styles = StyleSheet.create({
   containerAccent: {
     borderLeftWidth: 4,
     borderLeftColor: colors.leatherTan,
+  },
+  containerPressable: {
+    cursor: 'pointer',
   },
   header: {
     flexDirection: 'row',

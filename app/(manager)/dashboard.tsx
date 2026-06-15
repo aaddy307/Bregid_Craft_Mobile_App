@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, FlatList, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, FlatList, Alert, Modal } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, typography, SPACING, BORDER_RADIUS } from '../../constants';
@@ -12,6 +13,7 @@ import { formatEUSize } from '../../utils';
 import { exportToExcel, exportToPDF } from '../../services/export';
 
 type DateFilter = 'today' | 'week' | 'month' | 'custom';
+type MaterialType = 'leather' | 'buckle' | 'footbed';
 
 export default function ManagerDashboard() {
   const router = useRouter();
@@ -24,11 +26,14 @@ export default function ManagerDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
+  const [customDate, setCustomDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [workerFilter, setWorkerFilter] = useState<string>('all');
   const [logs, setLogs] = useState<ProductionLog[]>([]);
   const [workers, setWorkers] = useState<{ _id: string; name: string }[]>([]);
   const [showExportSheet, setShowExportSheet] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [breakdownModal, setBreakdownModal] = useState<{ visible: boolean; material: MaterialType | null }>({ visible: false, material: null });
 
   const getDateRange = useCallback(() => {
     const now = new Date();
@@ -47,10 +52,12 @@ export default function ManagerDashboard() {
         start.setMonth(now.getMonth() - 1);
         return { from: start.toISOString().split('T')[0], to: today };
       }
+      case 'custom':
+        return { from: customDate, to: customDate };
       default:
         return { from: today, to: today };
     }
-  }, [dateFilter]);
+  }, [dateFilter, customDate]);
 
   const loadData = useCallback(async (showSkeleton = true) => {
     if (showSkeleton) setIsLoading(true);
@@ -133,6 +140,24 @@ export default function ManagerDashboard() {
     { totalPairs: 0, totalLeather: 0, totalBuckles: 0, totalFootbeds: 0 }
   );
 
+  const leatherBreakdown = logs.reduce((acc: Record<string, number>, log) => {
+    const type = log.leatherType || 'Unknown';
+    acc[type] = (acc[type] || 0) + (log.leatherDeductedSqf ?? 0);
+    return acc;
+  }, {});
+
+  const buckleBreakdown = logs.reduce((acc: Record<string, number>, log) => {
+    const type = log.buckleType || 'Unknown';
+    acc[type] = (acc[type] || 0) + log.buckleDeducted;
+    return acc;
+  }, {});
+
+  const footbedBreakdown = logs.reduce((acc: Record<string, number>, log) => {
+    const key = `${log.footbedGender} EU ${log.footbedEuSize} - ${log.footbedType}`;
+    acc[key] = (acc[key] || 0) + log.footbedDeducted;
+    return acc;
+  }, {});
+
   const getInitials = (name: string) => {
     return name ? name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '?';
   };
@@ -178,7 +203,45 @@ export default function ManagerDashboard() {
               </Text>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity
+            style={[styles.filterBtn, dateFilter === 'custom' && styles.filterBtnActive]}
+            onPress={() => {
+              if (dateFilter === 'custom') {
+                setShowDatePicker(true);
+              } else {
+                setDateFilter('custom');
+                setShowDatePicker(true);
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons
+              name="calendar"
+              size={14}
+              color={dateFilter === 'custom' ? colors.onPrimary : colors.mutedSage}
+            />
+            <Text style={[styles.filterBtnText, dateFilter === 'custom' && styles.filterBtnTextActive]}>
+              {dateFilter === 'custom' ? customDate : 'DATE'}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={new Date(customDate)}
+            mode="date"
+            display="default"
+            maximumDate={new Date()}
+            onChange={(_event: any, selectedDate?: Date) => {
+              setShowDatePicker(false);
+              if (selectedDate) {
+                const dateStr = selectedDate.toISOString().split('T')[0];
+                setCustomDate(dateStr);
+                setDateFilter('custom');
+              }
+            }}
+          />
+        )}
 
         {isLoading ? (
           <View style={{ marginTop: 10 }}>
@@ -209,12 +272,12 @@ export default function ManagerDashboard() {
             {/* Stats Grid */}
             <View style={styles.statsGrid}>
               <View style={styles.statsRow}>
-                <StatCard title="TOTAL PAIRS" value={stats.totalPairs} icon="shoe-formal" trend="neutral" accentLeft />
-                <StatCard title="LEATHER" value={stats.totalLeather.toFixed(1)} unit="sqf" icon="texture-box" accentLeft />
+                <StatCard title="TOTAL PAIRS" value={stats.totalPairs} icon="shoe-formal" accentLeft />
+                <StatCard title="LEATHER" value={stats.totalLeather.toFixed(1)} unit="sqf" icon="texture-box" accentLeft onPress={() => setBreakdownModal({ visible: true, material: 'leather' })} />
               </View>
               <View style={styles.statsRow}>
-                <StatCard title="BUCKLES" value={stats.totalBuckles} unit="pcs" icon="circle-outline" accentLeft />
-                <StatCard title="FOOTBEDS" value={stats.totalFootbeds} unit="pcs" icon="layers-triple" accentLeft />
+                <StatCard title="BUCKLES" value={stats.totalBuckles} unit="pcs" icon="circle-outline" accentLeft onPress={() => setBreakdownModal({ visible: true, material: 'buckle' })} />
+                <StatCard title="FOOTBEDS" value={stats.totalFootbeds} unit="pcs" icon="layers-triple" accentLeft onPress={() => setBreakdownModal({ visible: true, material: 'footbed' })} />
               </View>
             </View>
 
@@ -269,6 +332,63 @@ export default function ManagerDashboard() {
           </View>
         </View>
       )}
+
+      {breakdownModal.visible && breakdownModal.material && (
+        <Modal visible={breakdownModal.visible} animationType="slide" transparent>
+          <View style={styles.overlay}>
+            <TouchableOpacity style={styles.overlayBg} onPress={() => setBreakdownModal({ visible: false, material: null })} />
+            <View style={styles.exportSheet}>
+              <View style={styles.sheetHandle} />
+              <View style={styles.breakdownHeader}>
+                <Text style={styles.exportTitle}>
+                  {breakdownModal.material === 'leather' ? 'LEATHER' : breakdownModal.material === 'buckle' ? 'BUCKLES' : 'FOOTBEDS'} USAGE BREAKDOWN
+                </Text>
+                <TouchableOpacity onPress={() => setBreakdownModal({ visible: false, material: null })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <MaterialCommunityIcons name="close" size={24} color={colors.onSurface} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.breakdownContent}>
+                {breakdownModal.material === 'leather' && (
+                  Object.keys(leatherBreakdown).length > 0 ? (
+                    Object.entries(leatherBreakdown).map(([type, qty]) => (
+                      <View key={type} style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>{type}</Text>
+                        <Text style={styles.breakdownValue}>{qty.toFixed(2)} sqf</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.breakdownEmpty}>No leather usage for this period</Text>
+                  )
+                )}
+                {breakdownModal.material === 'buckle' && (
+                  Object.keys(buckleBreakdown).length > 0 ? (
+                    Object.entries(buckleBreakdown).map(([type, qty]) => (
+                      <View key={type} style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>{type}</Text>
+                        <Text style={styles.breakdownValue}>{qty} pcs</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.breakdownEmpty}>No buckle usage for this period</Text>
+                  )
+                )}
+                {breakdownModal.material === 'footbed' && (
+                  Object.keys(footbedBreakdown).length > 0 ? (
+                    Object.entries(footbedBreakdown).map(([key, qty]) => (
+                      <View key={key} style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>{key}</Text>
+                        <Text style={styles.breakdownValue}>{qty} pcs</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.breakdownEmpty}>No footbed usage for this period</Text>
+                  )
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -289,6 +409,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.outlineVariant,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.factoryWhite,
     shadowColor: colors.shadowWarm,
     shadowOffset: { width: 0, height: 4 },
@@ -510,5 +631,38 @@ const styles = StyleSheet.create({
     ...typography.bodyLg,
     color: colors.mutedSage,
     fontWeight: '600',
+  },
+  breakdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  breakdownContent: {
+    maxHeight: 300,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceVariant,
+  },
+  breakdownLabel: {
+    ...typography.bodyMd,
+    color: colors.onSurface,
+    flex: 1,
+  },
+  breakdownValue: {
+    ...typography.bodyLg,
+    color: colors.leatherTan,
+    fontWeight: '700',
+  },
+  breakdownEmpty: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+    textAlign: 'center',
+    paddingVertical: 24,
   },
 });

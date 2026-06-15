@@ -4,24 +4,23 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, typography, SPACING, BORDER_RADIUS } from '../../../constants';
 import { AppHeader } from '../../../components/ui';
-import { useProductStore, useStockStore, Product } from '../../../store';
+import { useProductStore, Product } from '../../../store';
 import { formatEUSize } from '../../../utils';
-import { calculateDeduction, validateStock } from '../../../utils/stockCalculator';
+import { calculateDeduction } from '../../../utils/stockCalculator';
 
 export default function Step2Details() {
   const router = useRouter();
   const params = useLocalSearchParams<{ productId: string }>();
   const { getProductById } = useProductStore();
-  const stock = useStockStore((state) => state.stock);
 
   const [product, setProduct] = useState<Product | null>(() => getProductById(params.productId || '') || null);
-  const [selectedSize, setSelectedSize] = useState<number | null>(null);
+  const [selectedSizes, setSelectedSizes] = useState<number[]>([]);
   const [quantity, setQuantity] = useState('1');
   const [error, setError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      setSelectedSize(null);
+      setSelectedSizes([]);
       setQuantity('1');
       setError(null);
     }, [])
@@ -35,20 +34,28 @@ export default function Step2Details() {
   }, [params.productId]);
 
   const qty = parseInt(quantity) || 0;
-  const deduction = product && qty > 0 && selectedSize ? calculateDeduction(product, selectedSize, qty) : null;
-  const validation = deduction && stock ? validateStock(stock, deduction) : null;
+  const totalDeduction = product && qty > 0 && selectedSizes.length > 0
+    ? selectedSizes.reduce(
+        (acc, size) => {
+          const ded = calculateDeduction(product, size, qty);
+          return {
+            leatherDeducted: acc.leatherDeducted + ded.leatherDeducted,
+            buckleDeducted: acc.buckleDeducted + ded.buckleDeducted,
+            footbedDeducted: acc.footbedDeducted + ded.footbedDeducted,
+          };
+        },
+        { leatherDeducted: 0, buckleDeducted: 0, footbedDeducted: 0 }
+      )
+    : null;
 
   const handleContinue = () => {
-    if (!selectedSize || !product) {
-      setError('Please select a size');
+    if (!product) return;
+    if (selectedSizes.length === 0) {
+      setError('Please select at least one size');
       return;
     }
     if (qty < 1) {
       setError('Quantity must be at least 1');
-      return;
-    }
-    if (validation && !validation.valid) {
-      setError(validation.message || 'Insufficient stock');
       return;
     }
 
@@ -57,7 +64,7 @@ export default function Step2Details() {
       pathname: '/log-production/step3-confirm',
       params: {
         productId: product._id,
-        size: selectedSize.toString(),
+        sizes: selectedSizes.join(','),
         quantity,
       },
     });
@@ -96,12 +103,19 @@ export default function Step2Details() {
         <Text style={styles.sectionTitle}>SELECT EU SIZE</Text>
         <View style={styles.sizesGrid}>
           {product.sizes.map((size) => {
-            const isSelected = selectedSize === size;
+            const isSelected = selectedSizes.includes(size);
             return (
               <TouchableOpacity
                 key={size}
                 style={[styles.sizeOption, isSelected && styles.sizeOptionActive]}
-                onPress={() => setSelectedSize(size)}
+                onPress={() => {
+                  if (isSelected) {
+                    setSelectedSizes(selectedSizes.filter(s => s !== size));
+                  } else {
+                    setSelectedSizes([...selectedSizes, size]);
+                  }
+                  setError(null);
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.sizeText, isSelected && styles.sizeTextActive]}>
@@ -138,7 +152,7 @@ export default function Step2Details() {
           </TouchableOpacity>
         </View>
 
-        {deduction && (
+        {totalDeduction && (
           <View style={styles.deductionCard}>
             <View style={styles.deductionHeader}>
               <MaterialCommunityIcons name="package-variant" size={20} color={colors.leatherTan} />
@@ -150,30 +164,24 @@ export default function Step2Details() {
                   <MaterialCommunityIcons name="texture-box" size={16} color={colors.mutedSage} />
                   <Text style={styles.deductionLabel}>Leather</Text>
                 </View>
-                <Text style={styles.deductionValue}>{deduction.leatherDeducted.toFixed(2)} sqf</Text>
+                <Text style={styles.deductionValue}>{totalDeduction.leatherDeducted.toFixed(2)} sqf</Text>
               </View>
               <View style={styles.deductionRow}>
                 <View style={styles.deductionLabelRow}>
                   <MaterialCommunityIcons name="circle-outline" size={16} color={colors.mutedSage} />
                   <Text style={styles.deductionLabel}>Buckles</Text>
                 </View>
-                <Text style={styles.deductionValue}>{deduction.buckleDeducted} pcs</Text>
+                <Text style={styles.deductionValue}>{totalDeduction.buckleDeducted} pcs</Text>
               </View>
               <View style={[styles.deductionRow, styles.deductionRowLast]}>
                 <View style={styles.deductionLabelRow}>
                   <MaterialCommunityIcons name="layers-triple" size={16} color={colors.mutedSage} />
                   <Text style={styles.deductionLabel}>Footbeds</Text>
                 </View>
-                <Text style={styles.deductionValue}>{deduction.footbedDeducted} pcs</Text>
+                <Text style={styles.deductionValue}>{totalDeduction.footbedDeducted} pcs</Text>
               </View>
             </View>
-          </View>
-        )}
-
-        {validation && !validation.valid && (
-          <View style={styles.errorCard}>
-            <MaterialCommunityIcons name="alert-circle" size={18} color={colors.error} />
-            <Text style={styles.errorText}>{validation.message}</Text>
+            <Text style={styles.deductionNote}>For {selectedSizes.length} size{selectedSizes.length > 1 ? 's' : ''} × {qty} pairs each</Text>
           </View>
         )}
 
@@ -187,9 +195,9 @@ export default function Step2Details() {
 
       <View style={styles.footer}>
         <TouchableOpacity
-          style={[styles.continueBtn, (!selectedSize || qty < 1) && styles.continueBtnDisabled]}
+          style={[styles.continueBtn, (selectedSizes.length === 0 || qty < 1) && styles.continueBtnDisabled]}
           onPress={handleContinue}
-          disabled={!selectedSize || qty < 1}
+          disabled={selectedSizes.length === 0 || qty < 1}
           activeOpacity={0.8}
         >
           <Text style={styles.continueBtnText}>Review & Submit</Text>
@@ -341,6 +349,13 @@ const styles = StyleSheet.create({
   },
   deductionLabel: { ...typography.bodyMd, color: colors.onSurfaceVariant },
   deductionValue: { ...typography.bodyLg, fontWeight: '600', color: colors.onSurface },
+  deductionNote: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+    marginTop: 12,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
 
   // Error
   errorCard: {

@@ -33,6 +33,7 @@ const WOMEN_SIZES = [36, 37, 38, 39, 40, 41];
 export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: AddStockModalProps) {
   const [material, setMaterial] = useState<'leather' | 'buckle' | 'footbed'>('leather');
   const [quantity, setQuantity] = useState('');
+  const [purchasePrice, setPurchasePrice] = useState('');
 
   // Sync initialMaterial when modal opens
   React.useEffect(() => {
@@ -106,6 +107,11 @@ export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: 
       newErrors.quantity = qtyError;
     }
 
+    const priceError = validatePositiveNumber(purchasePrice);
+    if (priceError) {
+      newErrors.purchasePrice = priceError;
+    }
+
     // Material-specific type validation
     if (material === 'leather' && !leatherType.trim()) {
       newErrors.leatherType = 'Leather type is required';
@@ -169,6 +175,7 @@ export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: 
               invoiceNumber: invoiceNumber.trim().toUpperCase(),
               invoiceDate: invoiceDate.toISOString(),
               supplierContact: supplierContact.trim() || undefined,
+              purchasePrice: parseFloat(purchasePrice) || undefined,
             },
             'manual_add'
           );
@@ -202,6 +209,7 @@ export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: 
             invoiceNumber: invoiceNumber.trim().toUpperCase(),
             invoiceDate: invoiceDate.toISOString(),
             supplierContact: supplierContact.trim() || undefined,
+            purchasePrice: parseFloat(purchasePrice) || undefined,
           },
           'manual_add'
         );
@@ -222,6 +230,7 @@ export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: 
 
   const resetForm = () => {
     setQuantity('');
+    setPurchasePrice('');
     setLeatherType('');
     setBuckleType('');
     setBuckleSize('');
@@ -539,6 +548,44 @@ export function AddStockModal({ visible, onClose, onSuccess, initialMaterial }: 
             <Text style={styles.unitHint}>
               {material === 'leather' ? 'Square feet (sqf)' : 'Pieces'}
             </Text>
+
+            {/* Purchase Price */}
+            <Text style={[styles.label, styles.labelMargin]}>PURCHASE PRICE *</Text>
+            <TextInput
+              style={styles.input}
+              value={purchasePrice}
+              onChangeText={(text) => {
+                setPurchasePrice(text);
+                setErrors((prev) => {
+                      const { purchasePrice, ...rest } = prev;
+                      return rest;
+                    });
+              }}
+              placeholder={material === 'footbed' ? 'Enter price per pair' : 'Enter price per unit'}
+              placeholderTextColor={colors.mutedSage}
+              keyboardType="decimal-pad"
+            />
+            {errors.purchasePrice && (
+              <View style={styles.errorContainer}>
+                <MaterialCommunityIcons name="alert-circle" size={14} color={colors.error} />
+                <Text style={styles.errorText}>{errors.purchasePrice}</Text>
+              </View>
+            )}
+            {material === 'footbed' && (
+              <Text style={styles.unitHint}>
+                Footbed is sold in pairs. Total cost = (Qty ÷ 2) × Price per pair
+              </Text>
+            )}
+            {quantity && purchasePrice && (
+              <View style={styles.totalCostContainer}>
+                <Text style={styles.totalCostLabel}>Total Cost:</Text>
+                <Text style={styles.totalCostValue}>
+                  ₹{material === 'footbed'
+                    ? ((parseFloat(quantity) / 2) * parseFloat(purchasePrice)).toFixed(2)
+                    : (parseFloat(quantity) * parseFloat(purchasePrice)).toFixed(2)}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.supplierDivider}>
               <View style={styles.supplierDividerLine} />
@@ -926,5 +973,26 @@ const styles = StyleSheet.create({
     ...typography.bodyMd,
     color: colors.error,
     fontWeight: '500',
+  },
+  totalCostContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceContainerLow,
+    padding: 14,
+    borderRadius: BORDER_RADIUS.card,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.leatherTan,
+  },
+  totalCostLabel: {
+    ...typography.bodyMd,
+    color: colors.onSurface,
+    fontWeight: '600',
+  },
+  totalCostValue: {
+    ...typography.titleMd,
+    color: colors.leatherTan,
+    fontWeight: '700',
   },
 });

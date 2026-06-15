@@ -11,7 +11,7 @@ import { calculateDeduction } from '../../../utils/stockCalculator';
 
 export default function Step3Confirm() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ productId: string; size: string; quantity: string }>();
+  const params = useLocalSearchParams<{ productId: string; sizes: string; quantity: string }>();
   const user = useAuthStore((state) => state.user);
   const { getProductById } = useProductStore();
 
@@ -37,34 +37,53 @@ export default function Step3Confirm() {
     );
   }
 
-  const size = parseInt(params.size || '0');
+  const sizes = params.sizes ? params.sizes.split(',').map(Number) : [];
   const quantity = parseInt(params.quantity || '0');
-  const deduction = calculateDeduction(product, size, quantity);
+
+  const sizeDeductions = sizes.map(size => ({
+    size,
+    deduction: calculateDeduction(product, size, quantity),
+  }));
+
+  const totalLeather = sizeDeductions.reduce((sum, sd) => sum + sd.deduction.leatherDeducted, 0);
+  const totalBuckles = sizeDeductions.reduce((sum, sd) => sum + sd.deduction.buckleDeducted, 0);
+  const totalFootbeds = sizeDeductions.reduce((sum, sd) => sum + sd.deduction.footbedDeducted, 0);
 
   const handleSubmit = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      await createProductionLog({
-        workerId: user._id,
-        workerName: user.name,
-        product,
-        euSize: size,
-        quantityPairs: quantity,
-        updatedBy: user._id,
-        updatedByName: user.name,
-      });
+      let anyFailed = false;
+      for (const size of sizes) {
+        try {
+          await createProductionLog({
+            workerId: user._id,
+            workerName: user.name,
+            product,
+            euSize: size,
+            quantityPairs: quantity,
+            updatedBy: user._id,
+            updatedByName: user.name,
+          });
+        } catch {
+          anyFailed = true;
+        }
+      }
 
-      if (Platform.OS === 'web') {
-        window.alert(`Success!\n\nYou logged ${quantity} pairs of ${product.name}.`);
-        router.replace('/home');
+      if (anyFailed) {
+        setError('Failed to log production for some sizes');
       } else {
-        Alert.alert(
-          'Success',
-          `You logged ${quantity} pairs of ${product.name}.`,
-          [{ text: 'OK', onPress: () => router.replace('/home') }]
-        );
+        if (Platform.OS === 'web') {
+          window.alert(`Success!\n\nYou logged ${quantity} pairs each in sizes ${sizes.join(', ')} of ${product.name}.`);
+          router.replace('/home');
+        } else {
+          Alert.alert(
+            'Success',
+            `You logged ${quantity} pairs each in sizes ${sizes.join(', ')} of ${product.name}.`,
+            [{ text: 'OK', onPress: () => router.replace('/home') }]
+          );
+        }
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to log production';
@@ -90,10 +109,10 @@ export default function Step3Confirm() {
           <View style={styles.summaryBorder} />
           <View style={styles.summaryContent}>
             <Text style={styles.summaryPrimary}>
-              {quantity} pairs of {product.name}
+              {quantity} pairs × {sizes.length} size{sizes.length > 1 ? 's' : ''} of {product.name}
             </Text>
             <Text style={styles.summarySecondary}>
-              {formatEUSize(size)} — {product.gender}
+              Sizes: {sizes.map(s => formatEUSize(s)).join(', ')} — {product.gender}
             </Text>
           </View>
         </View>
@@ -103,22 +122,36 @@ export default function Step3Confirm() {
           <View style={styles.impactBox}>
             <MaterialCommunityIcons name="texture-box" size={28} color={colors.leatherTan} />
             <Text style={styles.impactLabel}>Leather</Text>
-            <Text style={styles.impactValue}>{deduction.leatherDeducted.toFixed(2)}</Text>
-            <Text style={styles.impactUnit}>sqf — {deduction.leatherType}</Text>
+            <Text style={styles.impactValue}>{totalLeather.toFixed(2)}</Text>
+            <Text style={styles.impactUnit}>sqf total</Text>
           </View>
           <View style={styles.impactBox}>
             <MaterialCommunityIcons name="circle-outline" size={28} color={colors.leatherTan} />
             <Text style={styles.impactLabel}>Buckles</Text>
-            <Text style={styles.impactValue}>{deduction.buckleDeducted}</Text>
-            <Text style={styles.impactUnit}>pcs — {deduction.buckleType}</Text>
+            <Text style={styles.impactValue}>{totalBuckles}</Text>
+            <Text style={styles.impactUnit}>pcs total</Text>
           </View>
           <View style={styles.impactBox}>
             <MaterialCommunityIcons name="layers-triple" size={28} color={colors.leatherTan} />
             <Text style={styles.impactLabel}>Footbeds</Text>
-            <Text style={styles.impactValue}>{deduction.footbedDeducted}</Text>
-            <Text style={styles.impactUnit}>pcs — {deduction.footbedType}</Text>
+            <Text style={styles.impactValue}>{totalFootbeds}</Text>
+            <Text style={styles.impactUnit}>pcs total</Text>
           </View>
         </View>
+
+        {sizes.length > 1 && (
+          <View style={styles.sizeBreakdown}>
+            <Text style={styles.sizeBreakdownTitle}>SIZE BREAKDOWN</Text>
+            {sizeDeductions.map(({ size, deduction }) => (
+              <View key={size} style={styles.sizeBreakdownRow}>
+                <Text style={styles.sizeBreakdownLabel}>EU {formatEUSize(size)}</Text>
+                <Text style={styles.sizeBreakdownValue}>
+                  {deduction.footbedDeducted} pcs
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {error && (
           <View style={styles.errorCard}>
@@ -201,6 +234,27 @@ const styles = StyleSheet.create({
   impactLabel: { ...typography.labelCaps, fontSize: 9, color: colors.mutedSage, marginTop: 8, letterSpacing: 1 },
   impactValue: { ...typography.headlineMd, fontWeight: '700', color: colors.onSurface, marginTop: 4 },
   impactUnit: { ...typography.bodyMd, fontSize: 10, color: colors.mutedSage, textAlign: 'center' },
+
+  // Size Breakdown
+  sizeBreakdown: {
+    backgroundColor: colors.surfaceContainerLow,
+    borderRadius: BORDER_RADIUS.card,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+  },
+  sizeBreakdownTitle: { ...typography.labelCaps, fontSize: 10, color: colors.mutedSage, marginBottom: 12, letterSpacing: 1 },
+  sizeBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outlineVariant,
+  },
+  sizeBreakdownLabel: { ...typography.bodyMd, color: colors.onSurface, fontWeight: '600' },
+  sizeBreakdownValue: { ...typography.bodyMd, color: colors.leatherTan, fontWeight: '700' },
 
   // Error
   errorCard: {

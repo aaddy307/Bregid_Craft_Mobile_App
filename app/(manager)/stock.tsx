@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, TextInput, FlatList, Modal, Alert } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, typography, SPACING, BORDER_RADIUS } from '../../constants';
 import { AppHeader, StockCard, Skeleton, FadeInView } from '../../components/ui';
 import { AddStockModal, ManageCategoriesModal } from '../../components/modals';
 import { useStockStore, FootbedEntry } from '../../store';
-import { getStock, updateThresholds, getStockLogs } from '../../services';
+import { getStock, updateThresholds, getStockLogs, getMaterialCategories, MaterialCategory } from '../../services';
 import { exportStockLogsToExcel, exportStockLogsToPDF } from '../../services/export';
 import { formatDate, formatTime } from '../../utils';
 
@@ -27,6 +28,8 @@ interface StockLog {
   supplierContact?: string;
   footbedGender?: string;
   footbedEuSize?: number;
+  purchasePrice?: number;
+  totalCost?: number;
 }
 
 export default function StockScreen() {
@@ -52,6 +55,14 @@ export default function StockScreen() {
   const [activeMaterial, setActiveMaterial] = useState<'leather' | 'buckle' | 'footbed'>('leather');
   const [isLoading, setIsLoading] = useState(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [materialCategories, setMaterialCategories] = useState<{ leather: MaterialCategory[]; buckle: MaterialCategory[]; footbed: MaterialCategory[] }>({
+    leather: [],
+    buckle: [],
+    footbed: [],
+  });
+  const [historyDateFilter, setHistoryDateFilter] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [tempDate, setTempDate] = useState(new Date());
 
   const loadData = useCallback(async (showSkeleton = true) => {
     if (showSkeleton) setIsLoading(true);
@@ -60,6 +71,17 @@ export default function StockScreen() {
       await getStock();
       const logs = await getStockLogs(50);
       setStockLogs(logs as StockLog[]);
+
+      const [leatherCats, buckleCats, footbedCats] = await Promise.all([
+        getMaterialCategories('leather'),
+        getMaterialCategories('buckle'),
+        getMaterialCategories('footbed'),
+      ]);
+      setMaterialCategories({
+        leather: leatherCats,
+        buckle: buckleCats,
+        footbed: footbedCats,
+      });
 
       if (showSkeleton) {
         const elapsed = Date.now() - startTime;
@@ -156,6 +178,10 @@ export default function StockScreen() {
 
   const filteredLogs = stockLogs.filter((log) => {
     if (log.material !== activeMaterial) return false;
+    if (historyDateFilter) {
+      const logDate = new Date(log.timestamp).toISOString().split('T')[0];
+      if (logDate !== historyDateFilter) return false;
+    }
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
@@ -166,28 +192,8 @@ export default function StockScreen() {
 
   const displayedLogs = showAllLogs ? filteredLogs : filteredLogs.slice(0, 10);
 
-  // Get sorted leathers
-  const sortedLeathers = React.useMemo(() => {
-    if (!stock?.leathers) return [];
-    return [...stock.leathers].sort((a, b) => a.type.localeCompare(b.type));
-  }, [stock?.leathers]);
-
-  // Get sorted buckles
-  const sortedBuckles = React.useMemo(() => {
-    if (!stock?.buckles) return [];
-    return [...stock.buckles].sort((a, b) => a.type.localeCompare(b.type));
-  }, [stock?.buckles]);
-
-  // Get sorted footbeds: Men first (EU 40-44), then Women (EU 36-41)
-  const sortedFootbeds = React.useMemo(() => {
-    if (!stock?.footbeds) return [];
-    return [...stock.footbeds].sort((a, b) => {
-      if (a.gender !== b.gender) {
-        return a.gender === 'Men' ? -1 : 1;
-      }
-      return a.euSize - b.euSize;
-    });
-  }, [stock?.footbeds]);
+  // Get categories for display (already sorted from DB)
+  const currentCategories = materialCategories[activeMaterial] || [];
 
   const renderLogItem = ({ item }: { item: StockLog }) => {
     const isManualAdd = item.reason === 'manual_add';
@@ -232,21 +238,23 @@ export default function StockScreen() {
     );
   };
 
-  const renderFootbedRow = (footbed: FootbedEntry, index: number) => {
-    const isLow = footbed.qty <= (stock?.thresholds.footbedQty || 50);
+  const renderFootbedRow = (category: MaterialCategory, index: number) => {
+    const stockEntry = stock?.footbeds?.find(f => f.gender === category.gender && f.euSize === category.size && f.type === category.name);
+    const qty = stockEntry?.qty ?? 0;
+    const isLow = qty <= (stock?.thresholds?.footbedQty || 50);
     return (
-      <View key={`${footbed.gender}-${footbed.euSize}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
+      <View key={`${category.gender}-${category.size}-${category.name}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
         <View style={styles.footbedGenderCol}>
-          <Text style={styles.footbedGender}>{footbed.gender}</Text>
+          <Text style={styles.footbedGender}>{category.gender}</Text>
         </View>
         <View style={styles.footbedSizeCol}>
-          <Text style={styles.footbedSize}>EU {footbed.euSize}</Text>
+          <Text style={styles.footbedSize}>EU {category.size}</Text>
         </View>
         <View style={styles.footbedTypeCol}>
-          <Text style={styles.footbedType} numberOfLines={1}>{footbed.type}</Text>
+          <Text style={styles.footbedType} numberOfLines={1}>{category.name}</Text>
         </View>
         <View style={styles.footbedQtyCol}>
-          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{footbed.qty}</Text>
+          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{qty}</Text>
           {isLow && (
             <View style={styles.lowBadge}>
               <Text style={styles.lowBadgeText}>LOW</Text>
@@ -257,15 +265,17 @@ export default function StockScreen() {
     );
   };
 
-  const renderLeatherRow = (leather: { type: string; qty: number }, index: number) => {
-    const isLow = leather.qty <= (stock?.thresholds.leatherSqf || 100);
+  const renderLeatherRow = (category: MaterialCategory, index: number) => {
+    const stockEntry = stock?.leathers?.find(l => l.type === category.name);
+    const qty = stockEntry?.qty ?? 0;
+    const isLow = qty <= (stock?.thresholds?.leatherSqf || 100);
     return (
-      <View key={`${leather.type}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
+      <View key={`${category.name}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
         <View style={{ flex: 6 }}>
-          <Text style={styles.footbedGender}>{leather.type}</Text>
+          <Text style={styles.footbedGender}>{category.name}</Text>
         </View>
         <View style={[styles.footbedQtyCol, { flex: 4 }]}>
-          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{(leather.qty ?? 0).toFixed(2)} sqf</Text>
+          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{(qty ?? 0).toFixed(2)} sqf</Text>
           {isLow && (
             <View style={styles.lowBadge}>
               <Text style={styles.lowBadgeText}>LOW</Text>
@@ -276,15 +286,18 @@ export default function StockScreen() {
     );
   };
 
-  const renderBuckleRow = (buckle: { type: string; qty: number }, index: number) => {
-    const isLow = buckle.qty <= (stock?.thresholds.buckleQty || 50);
+  const renderBuckleRow = (category: MaterialCategory, index: number) => {
+    const prefix = category.color ? `${category.name} (${category.color})` : category.name;
+    const stockEntries = stock?.buckles?.filter(b => b.type === prefix || b.type.startsWith(`${prefix} - `)) || [];
+    const qty = stockEntries.reduce((sum, b) => sum + (b.qty ?? 0), 0);
+    const isLow = qty <= (stock?.thresholds?.buckleQty || 50);
     return (
-      <View key={`${buckle.type}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
+      <View key={`${category.name}-${index}`} style={[styles.footbedRow, index % 2 === 1 && styles.footbedRowAlt]}>
         <View style={{ flex: 6 }}>
-          <Text style={styles.footbedGender}>{buckle.type}</Text>
+          <Text style={styles.footbedGender}>{prefix}</Text>
         </View>
         <View style={[styles.footbedQtyCol, { flex: 4 }]}>
-          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{buckle.qty} pcs</Text>
+          <Text style={[styles.footbedQty, isLow && styles.footbedQtyLow]}>{qty} pcs</Text>
           {isLow && (
             <View style={styles.lowBadge}>
               <Text style={styles.lowBadgeText}>LOW</Text>
@@ -353,6 +366,20 @@ export default function StockScreen() {
                 <Text style={styles.detailLabel}>Quantity</Text>
                 <Text style={styles.detailValue}>{(selectedLog.quantity ?? 0).toFixed(selectedLog.unit === 'sqf' ? 2 : 0)} {selectedLog.unit}</Text>
               </View>
+              {selectedLog.purchasePrice !== undefined && selectedLog.purchasePrice !== null && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Price per Unit</Text>
+                    <Text style={styles.detailValue}>₹{selectedLog.purchasePrice.toFixed(2)}</Text>
+                  </View>
+                  {selectedLog.totalCost !== undefined && selectedLog.totalCost !== null && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Total Cost</Text>
+                      <Text style={styles.detailValue}>₹{selectedLog.totalCost.toFixed(2)}</Text>
+                    </View>
+                  )}
+                </>
+              )}
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Type</Text>
                 <Text style={styles.detailValue}>{selectedLog.type === 'add' ? 'Added' : 'Deducted'}</Text>
@@ -523,12 +550,12 @@ export default function StockScreen() {
                         <Text style={[styles.footbedHeaderText, { textAlign: 'right' }]}>Quantity</Text>
                       </View>
                     </View>
-                    {sortedLeathers.length === 0 ? (
+                    {currentCategories.length === 0 ? (
                       <View style={styles.footbedEmpty}>
-                        <Text style={styles.footbedEmptyText}>No leather stock entries</Text>
+                        <Text style={styles.footbedEmptyText}>No leather categories defined</Text>
                       </View>
                     ) : (
-                      sortedLeathers.map((leather, index) => renderLeatherRow(leather, index))
+                      currentCategories.map((category, index) => renderLeatherRow(category, index))
                     )}
                   </View>
                 </>
@@ -557,12 +584,12 @@ export default function StockScreen() {
                         <Text style={[styles.footbedHeaderText, { textAlign: 'right' }]}>Quantity</Text>
                       </View>
                     </View>
-                    {sortedBuckles.length === 0 ? (
+                    {currentCategories.length === 0 ? (
                       <View style={styles.footbedEmpty}>
-                        <Text style={styles.footbedEmptyText}>No buckle stock entries</Text>
+                        <Text style={styles.footbedEmptyText}>No buckle categories defined</Text>
                       </View>
                     ) : (
-                      sortedBuckles.map((buckle, index) => renderBuckleRow(buckle, index))
+                      currentCategories.map((category, index) => renderBuckleRow(category, index))
                     )}
                   </View>
                 </>
@@ -597,12 +624,12 @@ export default function StockScreen() {
                         <Text style={styles.footbedHeaderText}>Qty</Text>
                       </View>
                     </View>
-                    {sortedFootbeds.length === 0 ? (
+                    {currentCategories.length === 0 ? (
                       <View style={styles.footbedEmpty}>
-                        <Text style={styles.footbedEmptyText}>No footbed stock entries</Text>
+                        <Text style={styles.footbedEmptyText}>No footbed categories defined</Text>
                       </View>
                     ) : (
-                      sortedFootbeds.map((footbed, index) => renderFootbedRow(footbed, index))
+                      currentCategories.map((category, index) => renderFootbedRow(category, index))
                     )}
                   </View>
                 </>
@@ -682,6 +709,47 @@ export default function StockScreen() {
                   <Text style={styles.exportBtnText}>Export</Text>
                 </TouchableOpacity>
               </View>
+
+              <View style={styles.dateFilterRow}>
+                <Text style={styles.dateFilterLabel}>Filter by Date:</Text>
+                <TouchableOpacity
+                  style={[styles.dateFilterBtn, historyDateFilter && styles.dateFilterBtnActive]}
+                  onPress={() => {
+                    if (historyDateFilter) {
+                      setTempDate(new Date(historyDateFilter));
+                    } else {
+                      setTempDate(new Date());
+                    }
+                    setShowDatePicker(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="calendar" size={16} color={historyDateFilter ? colors.onPrimary : colors.mutedSage} />
+                  <Text style={[styles.dateFilterBtnText, historyDateFilter && styles.dateFilterBtnTextActive]}>
+                    {historyDateFilter ? historyDateFilter : 'Select Date'}
+                  </Text>
+                  {historyDateFilter && (
+                    <TouchableOpacity onPress={() => setHistoryDateFilter(null)} hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}>
+                      <MaterialCommunityIcons name="close" size={14} color={historyDateFilter ? colors.onPrimary : colors.mutedSage} />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {showDatePicker && (
+                <DateTimePicker
+                  value={tempDate}
+                  mode="date"
+                  display="default"
+                  maximumDate={new Date()}
+                  onChange={(_event: any, selectedDate?: Date) => {
+                    setShowDatePicker(false);
+                    if (selectedDate) {
+                      setHistoryDateFilter(selectedDate.toISOString().split('T')[0]);
+                    }
+                  }}
+                />
+              )}
 
               <View style={styles.searchContainer}>
                 <MaterialCommunityIcons name="magnify" size={20} color={colors.mutedSage} />
@@ -789,6 +857,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.outlineVariant,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.factoryWhite,
   },
   tabBtnActive: {
@@ -817,6 +886,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.outlineVariant,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.factoryWhite,
   },
   subTabBtnActive: {
@@ -1065,6 +1135,40 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     padding: 0,
   },
+  dateFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
+  dateFilterLabel: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+    fontWeight: '600',
+  },
+  dateFilterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: BORDER_RADIUS.card,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+  },
+  dateFilterBtnActive: {
+    backgroundColor: colors.leatherTan,
+    borderColor: colors.leatherTan,
+  },
+  dateFilterBtnText: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+  },
+  dateFilterBtnTextActive: {
+    color: colors.onPrimary,
+    fontWeight: '600',
+  },
   logTableHeader: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceContainerLow,
@@ -1221,5 +1325,71 @@ const styles = StyleSheet.create({
     ...typography.bodyMd,
     fontWeight: '600',
     color: colors.leatherTan,
+  },
+  datePickerOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  datePickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  datePickerContainer: {
+    backgroundColor: colors.factoryWhite,
+    borderRadius: 16,
+    padding: 20,
+    width: '85%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 10,
+  },
+  datePickerTitle: {
+    ...typography.titleMd,
+    color: colors.onSurface,
+    fontWeight: '600',
+  },
+  datePickerContent: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    width: '100%',
+  },
+  datePickerClearBtn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: BORDER_RADIUS.button,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    alignItems: 'center',
+  },
+  datePickerClearBtnText: {
+    ...typography.bodyLg,
+    fontWeight: '600',
+    color: colors.onSurface,
+  },
+  datePickerConfirmBtn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: BORDER_RADIUS.button,
+    backgroundColor: colors.leatherTan,
+    alignItems: 'center',
+  },
+  datePickerConfirmBtnText: {
+    ...typography.bodyLg,
+    fontWeight: '600',
+    color: colors.onPrimary,
   },
 });

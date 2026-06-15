@@ -326,7 +326,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { flex: 1, padding: SPACING.md },
   filterRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md },
-  filterBtn: { flex: 1, padding: SPACING.sm, borderRadius: BORDER_RADIUS.button, borderWidth: 1, borderColor: colors.outlineVariant, alignItems: 'center' },
+  filterBtn: { flex: 1, padding: SPACING.sm, borderRadius: BORDER_RADIUS.button, borderWidth: 1, borderColor: colors.outlineVariant, alignItems: 'center', justifyContent: 'center' },
   filterBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   filterBtnText: { ...typography.labelCaps, fontSize: 10, color: colors.onSurface },
   filterBtnTextActive: { color: colors.onPrimary },

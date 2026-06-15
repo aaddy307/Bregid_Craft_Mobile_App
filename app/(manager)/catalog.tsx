@@ -19,8 +19,8 @@ export default function CatalogScreen() {
     if (showSkeleton) setIsLoading(true);
     try {
       await getProducts();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // Silently handle error
     } finally {
       setIsLoading(false);
     }

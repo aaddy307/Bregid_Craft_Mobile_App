@@ -64,7 +64,6 @@ export async function exportToExcel(logs: ProductionLog[]): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('Excel Export Error:', error);
     throw error;
   }
 }
@@ -155,7 +154,6 @@ export async function exportToPDF(logs: ProductionLog[]): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('PDF Export Error:', error);
     throw error;
   }
 }
@@ -234,7 +232,6 @@ export async function exportStockLogsToExcel(logs: StockLogEntry[]): Promise<voi
       }
     }
   } catch (error) {
-    console.error('Stock Excel Export Error:', error);
     throw error;
   }
 }
@@ -317,7 +314,6 @@ export async function exportStockLogsToPDF(logs: StockLogEntry[]): Promise<void>
       }
     }
   } catch (error) {
-    console.error('Stock PDF Export Error:', error);
     throw error;
   }
 }

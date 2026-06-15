@@ -25,8 +25,8 @@ export default function AccountsScreen() {
           await new Promise((resolve) => setTimeout(resolve, 250 - elapsed));
         }
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // Silently handle error
     } finally {
       setIsLoading(false);
     }

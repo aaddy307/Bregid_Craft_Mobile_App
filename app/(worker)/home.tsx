@@ -38,8 +38,8 @@ export default function WorkerHome() {
           setTargetReached(true);
         }
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // Silently handle error
     } finally {
       setIsLoading(false);
     }

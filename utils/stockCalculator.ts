@@ -131,7 +131,7 @@ export function isBelowThreshold(current: number, threshold: number): boolean {
 }
 
 export function getAvailableSizesForGender(gender: 'Men' | 'Women'): number[] {
-  return gender === 'Men' ? [40, 41, 42, 43, 44] : [36, 37, 38, 39, 40, 41];
+  return gender === 'Men' ? [40, 41, 42, 43, 44, 45] : [36, 37, 38, 39, 40, 41];
 }
 
 export function getFootbedTypeLabel(type: string, gender: 'Men' | 'Women', euSize: number): string {

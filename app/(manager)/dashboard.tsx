@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, FlatList, Alert, Modal } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
@@ -6,7 +6,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, typography, SPACING, BORDER_RADIUS } from '../../constants';
 import { AppHeader, StatCard, Skeleton, FadeInView } from '../../components/ui';
 import { useAuthStore, useStockStore } from '../../store';
-import { getStock } from '../../services';
+import { getStock, getProducts } from '../../services';
 import { getProductionLogs, ProductionLog, getDailyStats } from '../../services/production';
 import { getUsers } from '../../services/users';
 import { formatEUSize } from '../../utils';
@@ -29,8 +29,13 @@ export default function ManagerDashboard() {
   const [customDate, setCustomDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [workerFilter, setWorkerFilter] = useState<string>('all');
+  const [productFilter, setProductFilter] = useState<string>('all');
+  const [genderFilter, setGenderFilter] = useState<string>('all');
+  const [sizeFilter, setSizeFilter] = useState<string>('all');
   const [logs, setLogs] = useState<ProductionLog[]>([]);
   const [workers, setWorkers] = useState<{ _id: string; name: string }[]>([]);
+  const [products, setProducts] = useState<{ _id: string; name: string; gender?: string; sizes?: number[] }[]>([]);
+  const [activeSelector, setActiveSelector] = useState<'worker' | 'product' | 'gender' | 'size' | null>(null);
   const [showExportSheet, setShowExportSheet] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [breakdownModal, setBreakdownModal] = useState<{ visible: boolean; material: MaterialType | null }>({ visible: false, material: null });
@@ -64,16 +69,18 @@ export default function ManagerDashboard() {
     const startTime = Date.now();
     try {
       await getStock();
-      const allUsers = await getUsers();
+      const [allUsers, allProducts, allLogs] = await Promise.all([
+        getUsers(),
+        getProducts(),
+        getProductionLogs({}, 200)
+      ]);
       setWorkers(allUsers.filter((u: { role: string }) => u.role === 'worker'));
+      setProducts(allProducts);
 
       const range = getDateRange();
-      const allLogs = await getProductionLogs({}, 200);
-
       const filtered = allLogs.filter((log: ProductionLog) => {
         const inRange = log.logDate >= range.from && log.logDate <= range.to;
-        const matchesWorker = workerFilter === 'all' || log.workerId === workerFilter;
-        return inRange && matchesWorker;
+        return inRange;
       });
 
       setLogs(filtered);
@@ -89,7 +96,7 @@ export default function ManagerDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [getDateRange, workerFilter]);
+  }, [getDateRange]);
 
   useEffect(() => {
     loadData(true);
@@ -107,8 +114,35 @@ export default function ManagerDashboard() {
     router.replace('/login');
   };
 
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
+
+  useEffect(() => {
+    setPage(1);
+  }, [dateFilter, workerFilter, productFilter, genderFilter, sizeFilter]);
+
+  // Client-side filtering of logs
+  const filteredLogs = useMemo(() => {
+    return logs.filter((log) => {
+      const matchesWorker = workerFilter === 'all' || log.workerId === workerFilter;
+      const matchesProduct = productFilter === 'all' || log.productId === productFilter;
+      const matchesGender = genderFilter === 'all' || log.gender === genderFilter;
+      const matchesSize = sizeFilter === 'all' || log.euSize.toString() === sizeFilter;
+      return matchesWorker && matchesProduct && matchesGender && matchesSize;
+    });
+  }, [logs, workerFilter, productFilter, genderFilter, sizeFilter]);
+
+  const paginatedLogs = useMemo(() => {
+    return filteredLogs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  }, [filteredLogs, page]);
+
+  const totalPages = useMemo(() => {
+    return Math.ceil(filteredLogs.length / PAGE_SIZE);
+  }, [filteredLogs]);
+
   const handleExport = async (type: 'excel' | 'pdf') => {
-    if (logs.length === 0) {
+    if (filteredLogs.length === 0) {
       Alert.alert('No Data', 'No production logs to export for the selected period.');
       return;
     }
@@ -116,10 +150,10 @@ export default function ManagerDashboard() {
     setExporting(true);
     try {
       if (type === 'excel') {
-        await exportToExcel(logs);
+        await exportToExcel(filteredLogs);
         Alert.alert('Success', 'Production data exported to Excel file.');
       } else {
-        await exportToPDF(logs);
+        await exportToPDF(filteredLogs);
         Alert.alert('Success', 'Production data exported to PDF file.');
       }
     } catch (error) {
@@ -130,33 +164,67 @@ export default function ManagerDashboard() {
     }
   };
 
-  const stats = logs.reduce(
-    (acc, log) => ({
-      totalPairs: acc.totalPairs + log.quantityPairs,
-      totalLeather: acc.totalLeather + (log.leatherDeductedSqf ?? 0),
-      totalBuckles: acc.totalBuckles + log.buckleDeducted,
-      totalFootbeds: acc.totalFootbeds + log.footbedDeducted,
-    }),
-    { totalPairs: 0, totalLeather: 0, totalBuckles: 0, totalFootbeds: 0 }
-  );
+  // Extract unique EU sizes from products to display in the size filter, fallback to logs
+  const availableSizes = useMemo(() => {
+    const extracted = Array.from(
+      new Set(
+        products
+          .filter((p) => genderFilter === 'all' || p.gender === genderFilter)
+          .flatMap((p) => (p as any).sizes || [])
+      )
+    ).sort((a, b) => a - b);
+    if (extracted.length > 0) return extracted;
+    return Array.from(
+      new Set(
+        logs
+          .filter((l) => genderFilter === 'all' || l.gender === genderFilter)
+          .map((l) => l.euSize)
+      )
+    ).sort((a, b) => a - b);
+  }, [products, logs, genderFilter]);
 
-  const leatherBreakdown = logs.reduce((acc: Record<string, number>, log) => {
-    const type = log.leatherType || 'Unknown';
-    acc[type] = (acc[type] || 0) + (log.leatherDeductedSqf ?? 0);
-    return acc;
-  }, {});
+  // Reset size filter if the currently selected size is not available for the selected gender
+  useEffect(() => {
+    if (sizeFilter !== 'all' && !availableSizes.includes(Number(sizeFilter))) {
+      setSizeFilter('all');
+    }
+  }, [genderFilter, availableSizes, sizeFilter]);
 
-  const buckleBreakdown = logs.reduce((acc: Record<string, number>, log) => {
-    const type = log.buckleType || 'Unknown';
-    acc[type] = (acc[type] || 0) + log.buckleDeducted;
-    return acc;
-  }, {});
+  const stats = useMemo(() => {
+    return filteredLogs.reduce(
+      (acc, log) => ({
+        totalPairs: acc.totalPairs + log.quantityPairs,
+        totalLeather: acc.totalLeather + (log.leatherDeductedSqf ?? 0),
+        totalBuckles: acc.totalBuckles + log.buckleDeducted,
+        totalFootbeds: acc.totalFootbeds + log.footbedDeducted,
+      }),
+      { totalPairs: 0, totalLeather: 0, totalBuckles: 0, totalFootbeds: 0 }
+    );
+  }, [filteredLogs]);
 
-  const footbedBreakdown = logs.reduce((acc: Record<string, number>, log) => {
-    const key = `${log.footbedGender} EU ${log.footbedEuSize} - ${log.footbedType}`;
-    acc[key] = (acc[key] || 0) + log.footbedDeducted;
-    return acc;
-  }, {});
+  const leatherBreakdown = useMemo(() => {
+    return filteredLogs.reduce((acc: Record<string, number>, log) => {
+      const type = log.leatherType || 'Unknown';
+      acc[type] = (acc[type] || 0) + (log.leatherDeductedSqf ?? 0);
+      return acc;
+    }, {});
+  }, [filteredLogs]);
+
+  const buckleBreakdown = useMemo(() => {
+    return filteredLogs.reduce((acc: Record<string, number>, log) => {
+      const type = log.buckleType || 'Unknown';
+      acc[type] = (acc[type] || 0) + log.buckleDeducted;
+      return acc;
+    }, {});
+  }, [filteredLogs]);
+
+  const footbedBreakdown = useMemo(() => {
+    return filteredLogs.reduce((acc: Record<string, number>, log) => {
+      const key = `${log.footbedGender} EU ${log.footbedEuSize} - ${log.footbedType}`;
+      acc[key] = (acc[key] || 0) + log.footbedDeducted;
+      return acc;
+    }, {});
+  }, [filteredLogs]);
 
   const getInitials = (name: string) => {
     return name ? name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '?';
@@ -243,6 +311,58 @@ export default function ManagerDashboard() {
           />
         )}
 
+        {/* Scrollable Filters Strip */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filtersStrip}
+          contentContainerStyle={styles.filtersStripContent}
+        >
+          <TouchableOpacity
+            style={[styles.filterChip, workerFilter !== 'all' && styles.filterChipActive]}
+            onPress={() => setActiveSelector('worker')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterChipText, workerFilter !== 'all' && styles.filterChipTextActive]}>
+              Worker: {workerFilter === 'all' ? 'All' : workers.find(w => w._id === workerFilter)?.name || 'Selected'}
+            </Text>
+            <MaterialCommunityIcons name="chevron-down" size={14} color={workerFilter !== 'all' ? colors.onPrimary : colors.mutedSage} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterChip, productFilter !== 'all' && styles.filterChipActive]}
+            onPress={() => setActiveSelector('product')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterChipText, productFilter !== 'all' && styles.filterChipTextActive]}>
+              Product: {productFilter === 'all' ? 'All' : products.find(p => p._id === productFilter)?.name || 'Selected'}
+            </Text>
+            <MaterialCommunityIcons name="chevron-down" size={14} color={productFilter !== 'all' ? colors.onPrimary : colors.mutedSage} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterChip, genderFilter !== 'all' && styles.filterChipActive]}
+            onPress={() => setActiveSelector('gender')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterChipText, genderFilter !== 'all' && styles.filterChipTextActive]}>
+              Gender: {genderFilter === 'all' ? 'All' : genderFilter}
+            </Text>
+            <MaterialCommunityIcons name="chevron-down" size={14} color={genderFilter !== 'all' ? colors.onPrimary : colors.mutedSage} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterChip, sizeFilter !== 'all' && styles.filterChipActive]}
+            onPress={() => setActiveSelector('size')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterChipText, sizeFilter !== 'all' && styles.filterChipTextActive]}>
+              Size: {sizeFilter === 'all' ? 'All' : `EU ${sizeFilter}`}
+            </Text>
+            <MaterialCommunityIcons name="chevron-down" size={14} color={sizeFilter !== 'all' ? colors.onPrimary : colors.mutedSage} />
+          </TouchableOpacity>
+        </ScrollView>
+
         {isLoading ? (
           <View style={{ marginTop: 10 }}>
             {/* Stats grid skeleton */}
@@ -286,7 +406,7 @@ export default function ManagerDashboard() {
               <View style={styles.logsHeader}>
                 <View style={styles.logsTitleRow}>
                   <MaterialCommunityIcons name="clipboard-text-outline" size={18} color={colors.mutedSage} />
-                  <Text style={styles.logsTitle}>PRODUCTION LOGS</Text>
+                  <Text style={styles.logsTitle}>PRODUCTION LOGS ({filteredLogs.length})</Text>
                 </View>
                 <TouchableOpacity style={styles.exportBtn} onPress={() => setShowExportSheet(true)} activeOpacity={0.7}>
                   <MaterialCommunityIcons name="export-variant" size={16} color={colors.leatherTan} />
@@ -295,7 +415,7 @@ export default function ManagerDashboard() {
               </View>
 
               <FlatList
-                data={logs.slice(0, 50)}
+                data={paginatedLogs}
                 renderItem={renderLogItem}
                 keyExtractor={(item) => item._id}
                 scrollEnabled={false}
@@ -307,10 +427,101 @@ export default function ManagerDashboard() {
                   </View>
                 }
               />
+
+              {totalPages > 1 && (
+                <View style={styles.paginationRow}>
+                  <Text style={styles.paginationText}>
+                    Page {page} of {totalPages} ({filteredLogs.length} entries)
+                  </Text>
+                  <View style={styles.paginationButtons}>
+                    <TouchableOpacity
+                      style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
+                      onPress={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    >
+                      <Text style={[styles.pageBtnText, page === 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.pageBtn, page === totalPages && styles.pageBtnDisabled]}
+                      onPress={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                    >
+                      <Text style={[styles.pageBtnText, page === totalPages && styles.pageBtnTextDisabled]}>Next</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
           </FadeInView>
         )}
       </ScrollView>
+
+      {/* activeSelector Bottom Sheet Modal */}
+      {activeSelector && (
+        <Modal visible={!!activeSelector} animationType="slide" transparent>
+          <View style={styles.overlay}>
+            <TouchableOpacity style={styles.overlayBg} onPress={() => setActiveSelector(null)} />
+            <View style={styles.exportSheet}>
+              <View style={styles.sheetHandle} />
+              <View style={styles.breakdownHeader}>
+                <Text style={styles.exportTitle}>
+                  SELECT {activeSelector.toUpperCase()}
+                </Text>
+                <TouchableOpacity onPress={() => setActiveSelector(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <MaterialCommunityIcons name="close" size={24} color={colors.onSurface} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={{ maxHeight: 300, marginBottom: 20 }}>
+                {activeSelector === 'worker' && (
+                  <>
+                    <TouchableOpacity style={[styles.exportOption, workerFilter === 'all' && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setWorkerFilter('all'); setActiveSelector(null); }}>
+                      <Text style={[styles.exportText, workerFilter === 'all' && { fontWeight: '700' }]}>All Workers</Text>
+                    </TouchableOpacity>
+                    {workers.map(w => (
+                      <TouchableOpacity key={w._id} style={[styles.exportOption, workerFilter === w._id && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setWorkerFilter(w._id); setActiveSelector(null); }}>
+                        <Text style={[styles.exportText, workerFilter === w._id && { fontWeight: '700' }]}>{w.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+                {activeSelector === 'product' && (
+                  <>
+                    <TouchableOpacity style={[styles.exportOption, productFilter === 'all' && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setProductFilter('all'); setActiveSelector(null); }}>
+                      <Text style={[styles.exportText, productFilter === 'all' && { fontWeight: '700' }]}>All Products</Text>
+                    </TouchableOpacity>
+                    {products.map(p => (
+                      <TouchableOpacity key={p._id} style={[styles.exportOption, productFilter === p._id && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setProductFilter(p._id); setActiveSelector(null); }}>
+                        <Text style={[styles.exportText, productFilter === p._id && { fontWeight: '700' }]}>{p.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+                {activeSelector === 'gender' && (
+                  <>
+                    {['all', 'Men', 'Women'].map(g => (
+                      <TouchableOpacity key={g} style={[styles.exportOption, genderFilter === g && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setGenderFilter(g); setActiveSelector(null); }}>
+                        <Text style={[styles.exportText, genderFilter === g && { fontWeight: '700' }]}>{g === 'all' ? 'All Genders' : g}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+                {activeSelector === 'size' && (
+                  <>
+                    <TouchableOpacity style={[styles.exportOption, sizeFilter === 'all' && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setSizeFilter('all'); setActiveSelector(null); }}>
+                      <Text style={[styles.exportText, sizeFilter === 'all' && { fontWeight: '700' }]}>All Sizes</Text>
+                    </TouchableOpacity>
+                    {availableSizes.map(s => (
+                      <TouchableOpacity key={s} style={[styles.exportOption, sizeFilter === s.toString() && { backgroundColor: colors.surfaceContainer }]} onPress={() => { setSizeFilter(s.toString()); setActiveSelector(null); }}>
+                        <Text style={[styles.exportText, sizeFilter === s.toString() && { fontWeight: '700' }]}>EU {s}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {showExportSheet && (
         <View style={styles.overlay}>
@@ -664,5 +875,75 @@ const styles = StyleSheet.create({
     color: colors.mutedSage,
     textAlign: 'center',
     paddingVertical: 24,
+  },
+  filtersStrip: {
+    marginBottom: 16,
+  },
+  filtersStripContent: {
+    gap: 8,
+    paddingRight: 16,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.factoryWhite,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    borderRadius: BORDER_RADIUS.button,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    ...typography.bodyMd,
+    color: colors.onSurface,
+    fontWeight: '500',
+    fontSize: 12,
+  },
+  filterChipTextActive: {
+    color: colors.onPrimary,
+    fontWeight: '700',
+  },
+  paginationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  paginationText: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+    fontSize: 12,
+  },
+  paginationButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pageBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.factoryWhite,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    borderRadius: BORDER_RADIUS.button,
+  },
+  pageBtnDisabled: {
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.surfaceVariant,
+    opacity: 0.5,
+  },
+  pageBtnText: {
+    ...typography.bodyMd,
+    color: colors.onSurface,
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  pageBtnTextDisabled: {
+    color: colors.mutedSage,
   },
 });

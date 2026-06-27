@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, TextInput, FlatList, Modal, Alert } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -45,7 +45,8 @@ export default function StockScreen() {
   const [editingThresholds, setEditingThresholds] = useState(false);
   const [thresholdValues, setThresholdValues] = useState({ leather: '', buckle: '', footbed: '' });
   const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
-  const [showAllLogs, setShowAllLogs] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const PAGE_SIZE = 20;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLog, setSelectedLog] = useState<StockLog | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -69,7 +70,7 @@ export default function StockScreen() {
     const startTime = Date.now();
     try {
       await getStock();
-      const logs = await getStockLogs(50);
+      const logs = await getStockLogs(200);
       setStockLogs(logs as StockLog[]);
 
       const [leatherCats, buckleCats, footbedCats] = await Promise.all([
@@ -176,21 +177,33 @@ export default function StockScreen() {
     setShowDetailsModal(true);
   };
 
-  const filteredLogs = stockLogs.filter((log) => {
-    if (log.material !== activeMaterial) return false;
-    if (historyDateFilter) {
-      const logDate = new Date(log.timestamp).toISOString().split('T')[0];
-      if (logDate !== historyDateFilter) return false;
-    }
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      (log.supplierName?.toLowerCase().includes(query)) ||
-      (log.invoiceNumber?.toLowerCase().includes(query))
-    );
-  });
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [activeMaterial, historyDateFilter, searchQuery]);
 
-  const displayedLogs = showAllLogs ? filteredLogs : filteredLogs.slice(0, 10);
+  const filteredLogs = useMemo(() => {
+    return stockLogs.filter((log) => {
+      if (log.material !== activeMaterial) return false;
+      if (historyDateFilter) {
+        const logDate = new Date(log.timestamp).toISOString().split('T')[0];
+        if (logDate !== historyDateFilter) return false;
+      }
+      if (!searchQuery) return true;
+      const query = searchQuery.toLowerCase();
+      return (
+        (log.supplierName?.toLowerCase().includes(query)) ||
+        (log.invoiceNumber?.toLowerCase().includes(query))
+      );
+    });
+  }, [stockLogs, activeMaterial, historyDateFilter, searchQuery]);
+
+  const paginatedLogs = useMemo(() => {
+    return filteredLogs.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
+  }, [filteredLogs, historyPage]);
+
+  const totalHistoryPages = useMemo(() => {
+    return Math.ceil(filteredLogs.length / PAGE_SIZE);
+  }, [filteredLogs]);
 
   // Get categories for display (already sorted from DB)
   const currentCategories = materialCategories[activeMaterial] || [];
@@ -808,7 +821,7 @@ export default function StockScreen() {
                 </View>
               </View>
 
-              {displayedLogs.length === 0 ? (
+              {paginatedLogs.length === 0 ? (
                 <View style={styles.emptyLogs}>
                   <MaterialCommunityIcons name="clipboard-text-outline" size={32} color={colors.mutedSage} />
                   <Text style={styles.emptyLogsText}>
@@ -817,17 +830,35 @@ export default function StockScreen() {
                 </View>
               ) : (
                 <FlatList
-                  data={displayedLogs}
+                  data={paginatedLogs}
                   renderItem={renderLogItem}
                   keyExtractor={(item) => item._id}
                   scrollEnabled={false}
                 />
               )}
 
-              {filteredLogs.length > 10 && (
-                <TouchableOpacity style={styles.viewAllBtn} onPress={() => setShowAllLogs(!showAllLogs)} activeOpacity={0.7}>
-                  <Text style={styles.viewAllText}>{showAllLogs ? 'Show Less' : `View All (${filteredLogs.length})`}</Text>
-                </TouchableOpacity>
+              {totalHistoryPages > 1 && (
+                <View style={styles.paginationRow}>
+                  <Text style={styles.paginationText}>
+                    Page {historyPage} of {totalHistoryPages} ({filteredLogs.length} entries)
+                  </Text>
+                  <View style={styles.paginationButtons}>
+                    <TouchableOpacity
+                      style={[styles.pageBtn, historyPage === 1 && styles.pageBtnDisabled]}
+                      onPress={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                      disabled={historyPage === 1}
+                    >
+                      <Text style={[styles.pageBtnText, historyPage === 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.pageBtn, historyPage === totalHistoryPages && styles.pageBtnDisabled]}
+                      onPress={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+                      disabled={historyPage === totalHistoryPages}
+                    >
+                      <Text style={[styles.pageBtnText, historyPage === totalHistoryPages && styles.pageBtnTextDisabled]}>Next</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               )}
             </View>
           )}
@@ -1391,5 +1422,43 @@ const styles = StyleSheet.create({
     ...typography.bodyLg,
     fontWeight: '600',
     color: colors.onPrimary,
+  },
+  paginationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  paginationText: {
+    ...typography.bodyMd,
+    color: colors.mutedSage,
+    fontSize: 12,
+  },
+  paginationButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pageBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.factoryWhite,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    borderRadius: BORDER_RADIUS.button,
+  },
+  pageBtnDisabled: {
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.surfaceVariant,
+    opacity: 0.5,
+  },
+  pageBtnText: {
+    ...typography.bodyMd,
+    color: colors.onSurface,
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  pageBtnTextDisabled: {
+    color: colors.mutedSage,
   },
 });
